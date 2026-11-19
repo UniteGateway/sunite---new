@@ -1,0 +1,16 @@
+# Not executed in the authoring session (no network). Runs on push/PR once the repo is on GitHub.
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt pip-audit
+      - run: python tests/run_tests.py          # dependency-free engine + identity suite
+      - run: pytest -q                          # full suite incl. FastAPI API tests
+      - run: pip-audit -r requirements.txt      # known-vulnerability gate
+      - run: python -m backend.cli migrate
+        env: {SUNITE_DB_PATH: /tmp/ci.sqlite3}

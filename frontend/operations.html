@@ -1,0 +1,52 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SUNITE | Operations</title><style>
+:root{font-family:Inter,system-ui,-apple-system,sans-serif;color:#15243d;background:#f2f5fa}*{box-sizing:border-box}body{margin:0}
+header{background:#102d4e;color:#fff;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+header a{color:#9fcbff;font-size:13px;margin-left:14px}header img{height:38px;background:#fff;border-radius:6px;padding:2px 6px}
+nav{display:flex;gap:6px;padding:12px 18px 0;max-width:1400px;margin:auto;flex-wrap:wrap}nav button{background:#e3eaf3;color:#17324c}nav button.on{background:#102d4e;color:#fff}
+main{max-width:1400px;margin:auto;padding:14px 18px}.card{background:#fff;border:1px solid #e1e8f0;border-radius:14px;padding:16px;margin-bottom:14px}
+h2{font-size:16px;margin:0 0 10px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input,select{padding:8px 10px;border:1px solid #ced8e6;border-radius:8px;font:inherit;font-size:13px}
+button{border:0;background:#ff7518;color:#fff;padding:8px 12px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12px}button.secondary{background:#eaf0f8;color:#17324c}
+.board{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}.col{background:#f4f7fb;border-radius:10px;padding:8px;min-height:90px}
+.col h3{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#5d7086;margin:2px 0 8px;display:flex;justify-content:space-between}
+.lead{background:#fff;border:1px solid #dfe6ee;border-radius:8px;padding:8px;margin-bottom:6px;font-size:12px}.lead b{display:block;font-size:12.5px}
+.lead select{width:100%;margin-top:6px;padding:4px;font-size:11px}
+table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:8px 6px;border-bottom:1px solid #e7edf4;text-align:left}th{color:#5d7086;font-size:12px}
+.bar{background:#e6edf5;border-radius:6px;height:10px;overflow:hidden}.bar i{display:block;height:100%;background:#36b58b}
+.pill{display:inline-block;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:700;background:#e9eef5}
+.msg{font-size:13px;color:#a33;margin-top:6px}.hint{font-size:12px;color:#667992}.wrap{overflow-x:auto}
+</style></head><body>
+<header><div class="row"><img src="/static/assets/sunite-logo-small.png" alt="SUNITE"><strong>Operations</strong></div><div><a href="/">Designer</a><a href="/equipment">Equipment</a></div></header>
+<nav><button class="on" data-t="crm" onclick="tab('crm')">Sales pipeline</button><button data-t="proc" onclick="tab('proc')">Procurement</button><button data-t="epc" onclick="tab('epc')">EPC execution</button></nav>
+<main>
+<section id="crm"><div class="card"><h2>New lead</h2><div class="row">
+<input id="cName" placeholder="Customer name"><select id="cSeg"><option>residential</option><option>commercial</option><option>industrial</option><option>institutional</option><option>government</option></select>
+<input id="cPhone" placeholder="Phone"><input id="lTitle" placeholder="Opportunity (e.g. 50 kW rooftop)"><input id="lKw" type="number" placeholder="Est. kWp" style="width:100px">
+<button onclick="newLead()">Add lead</button></div><div id="crmMsg" class="msg"></div></div>
+<div class="card"><h2>Pipeline <span id="overdue" class="hint"></span></h2><div class="board" id="board"></div></div></section>
+<section id="proc" style="display:none"><div class="card"><h2>Inventory</h2><div class="wrap"><table id="inv"></table></div>
+<p class="hint">RFQs are raised from approved project revisions (API: POST /api/procurement/rfqs). Purchase orders need approval by a second person before they can be issued.</p></div>
+<div class="card"><h2>Vendor comparison</h2><div class="row"><input id="rfqId" placeholder="RFQ id" style="width:320px"><button onclick="compareRfq()">Compare</button></div><div id="cmp" class="wrap"></div><div id="procMsg" class="msg"></div></div></section>
+<section id="epc" style="display:none"><div class="card"><h2>Execution projects</h2><div class="wrap"><table id="epcList"></table></div><div id="epcMsg" class="msg"></div></div><div id="epcDetail"></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);const tok=sessionStorage.getItem('suniteToken')||'';
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,opts={}){opts.headers={'Content-Type':'application/json',...(tok?{'Authorization':'Bearer '+tok}:{})};const r=await fetch(path,opts);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'Error '+r.status);return d}
+const STAGES=['new','contacted','survey_scheduled','surveyed','design','quoted','negotiation','won','handed_over','lost'];
+const NEXT={new:['contacted'],contacted:['survey_scheduled','design'],survey_scheduled:['surveyed'],surveyed:['design'],design:[],quoted:['negotiation'],negotiation:['quoted'],lost:['contacted']};
+function tab(t){document.querySelectorAll('section').forEach(s=>s.style.display=s.id===t?'block':'none');document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));({crm:loadCrm,proc:loadProc,epc:loadEpc})[t]()}
+async function loadCrm(){try{const [leads,pipe]=await Promise.all([api('/api/crm/leads'),api('/api/crm/pipeline')]);$('overdue').textContent=pipe.overdue_follow_ups?`· ${pipe.overdue_follow_ups} overdue follow-up(s)`:'';
+$('board').innerHTML=STAGES.map(s=>`<div class="col"><h3><span>${s.replace('_',' ')}</span><span>${pipe.stages[s].count}${pipe.stages[s].est_kwp?' · '+pipe.stages[s].est_kwp+' kWp':''}</span></h3>${leads.filter(l=>l.stage===s).map(l=>`<div class="lead"><b>${esc(l.customer_name)}</b>${esc(l.title)}${l.est_kwp?' · '+l.est_kwp+' kWp':''}${(NEXT[s]||[]).length||!['won','handed_over','lost'].includes(s)?`<select onchange="move('${l.id}',this.value)"><option value="">Move to…</option>${(NEXT[s]||[]).map(n=>`<option>${n}</option>`).join('')}${['won','handed_over','lost'].includes(s)?'':'<option value="lost">lost</option>'}</select>`:''}</div>`).join('')}</div>`).join('')}catch(e){$('crmMsg').textContent=e.message}}
+async function newLead(){try{const c=await api('/api/crm/customers',{method:'POST',body:JSON.stringify({name:$('cName').value,segment:$('cSeg').value,phone:$('cPhone').value||null})});await api('/api/crm/leads',{method:'POST',body:JSON.stringify({customer_id:c.id,title:$('lTitle').value||$('cName').value,est_kwp:parseFloat($('lKw').value)||null})});$('crmMsg').textContent='';loadCrm()}catch(e){$('crmMsg').textContent=e.message}}
+async function move(id,stage){if(!stage)return;try{const body={stage};if(stage==='lost'){body.lost_reason=prompt('Reason lost?');if(!body.lost_reason)return}await api(`/api/crm/leads/${id}/stage`,{method:'POST',body:JSON.stringify(body)});loadCrm()}catch(e){$('crmMsg').textContent=e.message;loadCrm()}}
+async function loadProc(){try{const inv=await api('/api/procurement/inventory');$('inv').innerHTML='<tr><th>Code</th><th>Item</th><th>Location</th><th>Qty</th></tr>'+(inv.length?inv.map(i=>`<tr><td>${esc(i.code)}</td><td>${esc(i.item)}</td><td>${esc(i.location)}</td><td>${esc(i.qty)} ${esc(i.unit)}</td></tr>`).join(''):'<tr><td colspan="4" class="hint">No stock received yet.</td></tr>')}catch(e){$('procMsg').textContent=e.message}}
+async function compareRfq(){try{const c=await api(`/api/procurement/rfqs/${encodeURIComponent($('rfqId').value)}/comparison`);$('cmp').innerHTML='<table><tr><th>Vendor</th><th>Subtotal</th><th>Tax</th><th>Total</th><th>Complete</th><th>Delivery</th></tr>'+c.vendors.map(v=>`<tr><td>${esc(v.vendor)}${c.recommendation&&c.recommendation.vendor_id===v.vendor_id?' <span class="pill" style="background:#dcf5e8;color:#0d7a46">recommended</span>':''}</td><td>${v.subtotal.toLocaleString('en-IN')}</td><td>${v.tax.toLocaleString('en-IN')}</td><td><b>${v.total.toLocaleString('en-IN')}</b></td><td>${v.complete?'yes':'no ('+[...v.missing_lines,...v.non_compliant_lines].length+' lines)'}</td><td>${esc(v.delivery_days??'-')} d</td></tr>`).join('')+'</table>'+(c.recommendation?`<p class="hint">${esc(c.recommendation.basis)}</p>`:'')}catch(e){$('procMsg').textContent=e.message}}
+async function loadEpc(){try{const l=await api('/api/epc');$('epcList').innerHTML='<tr><th>Project</th><th>Status</th><th>Start</th><th></th></tr>'+(l.length?l.map(e=>`<tr><td>${esc(e.project_name)}</td><td><span class="pill">${esc(e.status)}</span></td><td>${esc(e.start_date)}</td><td><button class="secondary" onclick="epcDetail('${e.id}')">Open</button></td></tr>`).join(''):'<tr><td colspan="4" class="hint">No execution projects. Approved designs become execution projects via POST /api/epc.</td></tr>')}catch(e){$('epcMsg').textContent=e.message}}
+async function epcDetail(id){try{const e=await api('/api/epc/'+id);$('epcDetail').innerHTML=`<div class="card"><h2>${esc(e.status)} · ${e.progress_pct}% complete</h2><div class="bar"><i style="width:${e.progress_pct}%"></i></div>
+<div class="wrap"><table style="margin-top:10px"><tr><th>WBS</th><th>Task</th><th>Planned</th><th>Status</th><th>Progress</th></tr>${e.tasks.map(t=>`<tr><td>${esc(t.wbs)}</td><td>${esc(t.name)}</td><td>${esc(t.planned_start)} → ${esc(t.planned_end)}</td><td>${esc(t.status)}</td><td><div class="bar"><i style="width:${t.progress_pct}%"></i></div></td></tr>`).join('')}</table></div>
+<h2 style="margin-top:14px">Checklists</h2>${e.checklists.map(c=>`<p><b>${esc(c.kind)}</b>: ${c.items.filter(i=>['pass','na'].includes(i.status)).length}/${c.items.length} passed · ${esc(c.status)}</p>`).join('')}
+<h2>Punch list</h2>${e.punch.length?e.punch.map(p=>`<p>${esc(p.severity)} · ${esc(p.description)} · ${esc(p.status)}</p>`).join(''):'<p class="hint">None</p>'}</div>`}catch(err){$('epcMsg').textContent=err.message}}
+loadCrm();
+</script></body></html>

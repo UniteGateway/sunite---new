@@ -1,0 +1,65 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SUNITE | Map & site survey</title><style>
+:root{font-family:Inter,system-ui,sans-serif;color:#15243d;background:#f2f5fa}*{box-sizing:border-box}body{margin:0}
+header{background:#102d4e;color:#fff;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+header a{color:#9fcbff;font-size:13px;margin-left:12px}header img{height:34px;background:#fff;border-radius:6px;padding:2px 6px}
+main{max-width:1500px;margin:auto;padding:12px;display:grid;grid-template-columns:1fr 320px;gap:12px}
+.card{background:#fff;border:1px solid #e1e8f0;border-radius:14px;padding:14px}canvas{width:100%;height:72vh;min-height:380px;border-radius:10px;display:block;touch-action:none}
+button{border:0;background:#eaf0f8;color:#17324c;padding:8px 11px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12px}button.on,button.go{background:#ff7518;color:#fff}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}input,select{padding:8px;border:1px solid #ced8e6;border-radius:8px;font:inherit;font-size:13px}
+.f{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:6px 0;border-bottom:1px solid #eef2f6}.hint{font-size:12px;color:#667992;line-height:1.5}.msg{font-size:13px;color:#a33}
+@media(max-width:900px){main{grid-template-columns:1fr}canvas{height:58vh}}
+</style></head><body>
+<header><div class="row" style="margin:0"><img src="/static/assets/sunite-logo-small.png" alt="SUNITE"><strong>Map &amp; site survey</strong></div><div><a href="/">Designer</a><a href="/viewer">3-D view</a></div></header>
+<main><div class="card"><div class="row"><input id="loc" placeholder="Google Maps link or lat, lon" style="flex:1;min-width:220px"><button onclick="goTo()">Go</button>
+<select id="layer" onchange="setLayer()"></select><button onclick="zoom(1)">＋</button><button onclick="zoom(-1)">－</button></div>
+<div class="row" id="tools"></div><canvas id="cv"></canvas></div>
+<div class="card"><b>Traced features</b><div id="list" class="hint">Choose a tool, click corners on the map, then press Finish.</div>
+<div class="row" style="margin-top:10px"><button onclick="finish()">Finish shape</button><button onclick="undoPt()">Undo point</button></div>
+<div class="row"><button onclick="aiDetect()" id="aiBtn">✨ Detect with AI</button><label class="hint" style="cursor:pointer">or image of this view <input type="file" id="aiImg" accept="image/png,image/jpeg" style="display:none" onchange="aiDetect(this.files[0])"><u>upload</u></label></div>
+<div id="sugg"></div>
+<div class="row"><button class="go" onclick="sendToDesigner()">Use in designer →</button><button onclick="downloadGeo()">Download GeoJSON</button></div>
+<p class="hint">Traced outlines from imagery are approximate: imagery may be offset, tilted or out of date. Confirm key dimensions on site. Obstacle and tree heights come from your survey, not the image.</p>
+<p class="hint" id="imgNote"></p><div id="msg" class="msg"></div></div></main>
+<script src="/static/mapws.js"></script><script>
+const $=id=>document.getElementById(id),{M,MapView}=window.SuniteMap;let mv,layers=[],tool='roof',drag=null,moved=false;
+const TOOLS={roof:'Roof',obstacle:'Obstacle',keepout:'Keep-out / walkway',tree:'Tree',building:'Adjacent building',pan:'Pan'};
+$('tools').innerHTML=Object.entries(TOOLS).map(([k,v])=>`<button data-t="${k}" onclick="setTool('${k}')">${v}</button>`).join('');
+function setTool(t){tool=t;document.querySelectorAll('#tools button').forEach(b=>b.classList.toggle('on',b.dataset.t===t))}
+function list(){$('list').innerHTML=mv.features.length?mv.features.map((f,i)=>`<div class="f"><span><b>${f.name}</b> · ${M.area(f.ring).toFixed(1)} m²${f.height_m!=null?' · h '+f.height_m+' m':''}</span><button onclick="delF(${i})">✕</button></div>`).join(''):'No features yet.'}
+function delF(i){mv.features.splice(i,1);list();mv.draw()}
+function finish(){const d=mv.draft;if(!d||d.ring.length<3){$('msg').textContent='A shape needs at least 3 points';return}
+ if(d.role!=='roof'&&d.role!=='keepout'){const h=prompt(`Height of ${TOOLS[d.role].toLowerCase()} above the roof (m) from survey:`,'2');if(h===null)return;const v=parseFloat(h);if(!(v>=0&&v<300)){$('msg').textContent='Enter a valid height';return}d.height_m=v}
+ const n=mv.features.filter(f=>f.role===d.role).length+1;d.name=`${TOOLS[d.role].split(' ')[0]} ${n}`;mv.features.push(d);mv.draft=null;$('msg').textContent='';list();mv.draw()}
+function undoPt(){if(mv.draft){mv.draft.ring.pop();mv.draw()}}
+function zoom(k){mv.z=Math.max(3,Math.min(21,mv.z+k));mv.draw()}
+function setLayer(){mv.layer=layers[$('layer').value];$('imgNote').textContent=mv.layer.note||'';mv.cache.clear();mv.draw()}
+async function goTo(){const r=await fetch('/api/v3/geo/parse-location',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:$('loc').value})});const d=await r.json();
+ if(d.status!=='ok'){$('msg').textContent=d.message;return}mv.center=[d.lon,d.lat];mv.z=20;$('msg').textContent=d.note||'';mv.draw()}
+function geo(){return M.toGeoJSON(mv.features)}
+let suggestions=[];
+async function aiDetect(file){try{$('msg').textContent='Detecting…';const body={center_lat:mv.center[1],center_lon:mv.center[0],zoom:mv.z,width_px:Math.round(mv.w),height_px:Math.round(mv.h)};
+ if(file){if(file.size>8e6)throw Error('Image larger than 8 MB');body.image_b64=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result.split(',')[1]);r.onerror=no;r.readAsDataURL(file)})}
+ const tok=sessionStorage.getItem('suniteToken');const r=await fetch('/api/v3/geo/ai-detect',{method:'POST',headers:{'Content-Type':'application/json',...(tok?{'Authorization':'Bearer '+tok}:{})},body:JSON.stringify(body)});
+ const d=await r.json();if(!r.ok)throw Error(d.detail||'Detection failed');
+ suggestions=d.features.map(f=>({role:f.properties.role,name:f.properties.name+' (AI '+Math.round(f.properties.confidence*100)+'%)',ring:f.geometry.coordinates[0].slice(0,-1),height_m:null,ai:true}));
+ mv.suggestions=suggestions;renderSugg();$('msg').textContent=d.notice+(d.rejected.length?` (${d.rejected.length} outline(s) discarded by validation)`:'');mv.draw()}catch(e){$('msg').textContent=e.message}}
+function renderSugg(){$('sugg').innerHTML=suggestions.length?'<b>AI suggestions (unverified)</b>'+suggestions.map((s,i)=>`<div class="f"><span>${s.name} · ${M.area(s.ring).toFixed(1)} m²</span><span><button onclick="acceptS(${i})">Accept</button> <button onclick="dropS(${i})">✕</button></span></div>`).join(''):''}
+function acceptS(i){const s=suggestions.splice(i,1)[0];if(s.role!=='roof'&&s.role!=='keepout'){const h=prompt(`Measured height of ${s.name} (m) - required for shading:`,'');if(h===null){suggestions.splice(i,0,s);return}const v=parseFloat(h);if(!(v>=0&&v<300)){suggestions.splice(i,0,s);$('msg').textContent='Enter a valid measured height';return}s.height_m=v}
+ delete s.ai;mv.features.push(s);mv.suggestions=suggestions;renderSugg();list();mv.draw()}
+function dropS(i){suggestions.splice(i,1);mv.suggestions=suggestions;renderSugg();mv.draw()}
+function downloadGeo(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(geo(),null,1)],{type:'application/geo+json'}));a.download='sunite-site.geojson';a.click()}
+async function sendToDesigner(){try{if(!mv.features.some(f=>f.role==='roof'))throw Error('Trace at least one roof');
+ const r=await fetch('/api/v3/geo/import-geojson',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({geojson:geo()})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Import failed');
+ const roof=d.roofs[0];sessionStorage.setItem('suniteImportedSite',JSON.stringify({lat:d.origin.lat,lon:d.origin.lon,roof:roof.polygon,
+  obstacles:roof.obstacles.map(o=>({name:o.name,height_m:o.height_m,polygon:o.polygon})),roofs:d.roofs.length,warnings:d.warnings}));location.href='/'}catch(e){$('msg').textContent=e.message}}
+const cv=$('cv');
+cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,c:mv.center.slice()};moved=false;cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(dx,dy)>4)moved=true;if(!moved)return;
+ const c=M.lonLatToPx(...drag.c,mv.z);mv.center=M.pxToLonLat(c[0]-dx,c[1]-dy,mv.z);mv.draw()});
+cv.addEventListener('pointerup',e=>{const was=moved;drag=null;if(was||tool==='pan')return;const r=cv.getBoundingClientRect(),ll=mv.toLonLat(e.clientX-r.left,e.clientY-r.top);
+ if(!mv.draft||mv.draft.role!==tool)mv.draft={role:tool,ring:[]};mv.draft.ring.push(ll);mv.draw()});
+cv.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY<0?1:-1)},{passive:false});
+(async()=>{const cfg=await (await fetch('/api/config/map')).json();try{const st=await (await fetch('/api/ai/status')).json();if(!st.configured){$('aiBtn').disabled=true;$('aiBtn').title='Set GEMINI_API_KEY on the server to enable';$('aiBtn').textContent='✨ Detect with AI (not configured)'}}catch(e){}layers=cfg.layers;$('layer').innerHTML=layers.map((l,i)=>`<option value="${i}">${l.name}</option>`).join('');
+ mv=new MapView(cv,{layer:layers[0]});setLayer();setTool('roof');window.addEventListener('resize',()=>mv.size());mv.size();list()})();
+</script></body></html>

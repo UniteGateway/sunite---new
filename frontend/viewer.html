@@ -1,0 +1,43 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SUNITE | 3-D view & shadows</title><style>
+:root{font-family:Inter,system-ui,sans-serif;color:#15243d;background:#f2f5fa}*{box-sizing:border-box}body{margin:0}
+header{background:#102d4e;color:#fff;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+header a{color:#9fcbff;font-size:13px;margin-left:12px}header img{height:34px;background:#fff;border-radius:6px;padding:2px 6px}
+main{max-width:1400px;margin:auto;padding:12px;display:grid;grid-template-columns:1fr 300px;gap:12px}
+.card{background:#fff;border:1px solid #e1e8f0;border-radius:14px;padding:14px}canvas{width:100%;height:68vh;min-height:360px;border-radius:10px;touch-action:none;cursor:grab;display:block}
+button{border:0;background:#eaf0f8;color:#17324c;padding:8px 11px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12px}button.on,button.go{background:#ff7518;color:#fff}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}label{font-size:12px;font-weight:700;color:#45566b;display:block;margin:10px 0 4px}
+input{padding:8px;border:1px solid #ced8e6;border-radius:8px;font:inherit;width:100%}input[type=range]{padding:0}
+.k{font-size:13px;margin:6px 0}.k b{font-size:18px;color:#0c3763;display:block}.hint{font-size:12px;color:#667992;line-height:1.5}
+@media(max-width:900px){main{grid-template-columns:1fr}canvas{height:52vh}}
+</style></head><body>
+<header><div class="row" style="margin:0"><img src="/static/assets/sunite-logo-small.png" alt="SUNITE"><strong>3-D view &amp; shadow study</strong></div><div><a href="/">Designer</a><a href="/operations">Operations</a></div></header>
+<main><div class="card"><div class="row" id="presets"></div><canvas id="cv"></canvas>
+<div class="row" style="margin-top:8px"><button class="go" id="play" onclick="togglePlay()">▶ Animate day</button><input id="t" type="range" min="0" max="0" value="0" style="flex:1" oninput="setStep(+this.value)"></div></div>
+<div class="card"><label>Date</label><input id="date" type="date" value="2026-12-21" onchange="loadSun()">
+<div class="row" style="margin-top:6px"><button onclick="setDate('03-20')">Mar equinox</button><button onclick="setDate('06-21')">Jun solstice</button><button onclick="setDate('12-21')">Dec solstice</button></div>
+<div class="k">Time (solar)<b id="clock">-</b></div><div class="k">Sun elevation / azimuth<b id="sunpos">-</b></div>
+<div class="k">Modules<b id="mods">-</b></div><div class="k">Annual beam-weighted shading<b id="shade">-</b></div>
+<p class="hint">Drag to orbit, scroll or pinch to zoom. Shadows are cast onto the roof plane from obstacles, parapets and module rows for the selected instant. Module colour shows annual shading (blue none → red high).</p>
+<p class="hint" id="msg"></p></div></main>
+<script src="/static/viewer3d.js"></script><script>
+const $=id=>document.getElementById(id), VW=window.SuniteViewer, cv=$('cv'), ctx=cv.getContext('2d');
+let data=null, faces=[], cam=null, sunSteps=[], step=0, timer=null, preset='perspective';
+function size(){const r=cv.getBoundingClientRect(),d=window.devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;ctx.setTransform(d,0,0,d,0,0);if(cam)cam.scale=Math.min(r.width,r.height)/(cam.span*0.95)*(cam.zoom||1);draw()}
+function draw(){if(!data)return;const r=cv.getBoundingClientRect();VW.render(ctx,r.width,r.height,faces,cam,{sun:sunSteps[step]})}
+function usePreset(n){preset=n;Object.assign(cam,VW.PRESETS[n]);document.querySelectorAll('#presets button').forEach(b=>b.classList.toggle('on',b.dataset.p===n));draw()}
+$('presets').innerHTML=Object.keys(VW.PRESETS).map(n=>`<button data-p="${n}" onclick="usePreset('${n}')">${n[0].toUpperCase()+n.slice(1)}</button>`).join('');
+function setDate(md){$('date').value=$('date').value.slice(0,5)+md;loadSun()}
+function setStep(i){step=i;const s=sunSteps[i];if(s){const m=s.solar_minutes_from_noon+720;$('clock').textContent=`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;$('sunpos').textContent=`${s.elevation_deg.toFixed(1)}° / ${s.azimuth_deg.toFixed(1)}°`}draw()}
+function togglePlay(){if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ Animate day';return}$('play').textContent='❚❚ Pause';timer=setInterval(()=>{const n=(step+1)%sunSteps.length;$('t').value=n;setStep(n)},350)}
+async function loadSun(){const r=await fetch('/api/v3/sun-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:data.lat,longitude:data.lon,date:$('date').value,step_min:30})});sunSteps=await r.json();$('t').max=Math.max(0,sunSteps.length-1);const noon=sunSteps.findIndex(s=>s.solar_minutes_from_noon===0);$('t').value=noon<0?0:noon;setStep(+$('t').value)}
+let drag=null,pinch=null;
+cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(!drag)return;cam.yaw-=(e.clientX-drag.x)*0.008;cam.pitch=Math.max(0.02,Math.min(Math.PI/2,cam.pitch+(e.clientY-drag.y)*0.006));drag={x:e.clientX,y:e.clientY};draw()});
+cv.addEventListener('pointerup',()=>drag=null);
+cv.addEventListener('wheel',e=>{e.preventDefault();cam.zoom=Math.max(0.3,Math.min(6,(cam.zoom||1)*(e.deltaY<0?1.12:0.89)));size()},{passive:false});
+async function init(){try{const payload=JSON.parse(sessionStorage.getItem('suniteDesignPayload')||'null');if(!payload){$('msg').textContent='Generate a design in the designer first, then press "3-D view".';return}
+const tok=sessionStorage.getItem('suniteToken');const r=await fetch('/api/design',{method:'POST',headers:{'Content-Type':'application/json',...(tok?{'Authorization':'Bearer '+tok}:{})},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)throw Error(d.detail||'Design failed');
+data={...d,lat:payload.latitude,lon:payload.longitude};faces=VW.buildScene(d);cam=VW.fitCamera(d);$('mods').textContent=d.panel_count+' · '+d.dc_kwp+' kWp';$('shade').textContent=d.beam_weighted_shading_pct+' %';usePreset('perspective');size();await loadSun()}catch(e){$('msg').textContent=e.message}}
+window.addEventListener('resize',size);init();
+</script></body></html>

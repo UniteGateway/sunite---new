@@ -1,0 +1,40 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SUNITE | Equipment Library</title><style>
+:root{font-family:Inter,system-ui,-apple-system,sans-serif;color:#15243d;background:#f2f5fa}*{box-sizing:border-box}body{margin:0}
+header{background:#102d4e;color:#fff;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+header a{color:#9fcbff;font-size:13px}header img{height:38px;background:#fff;border-radius:6px;padding:2px 6px}
+main{max-width:1300px;margin:auto;padding:18px}.card{background:#fff;border:1px solid #e1e8f0;border-radius:14px;padding:18px;margin-bottom:16px}
+h2{font-size:17px;margin:0 0 12px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input,select,textarea{padding:9px 11px;border:1px solid #ced8e6;border-radius:8px;font:inherit;font-size:13px}textarea{width:100%;height:110px;font-family:ui-monospace,monospace;font-size:12px}
+button{border:0;background:#ff7518;color:#fff;padding:9px 13px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12px}button.secondary{background:#eaf0f8;color:#17324c}
+table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:9px 6px;border-bottom:1px solid #e7edf4;text-align:left;vertical-align:top}th{color:#5d7086;font-size:12px}
+.pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.verified{background:#dcf5e8;color:#0d7a46}.pending_verification{background:#fff3d6;color:#9a6200}.draft{background:#e9eef5;color:#45566b}.retired{background:#f4e1e1;color:#9b2c2c}
+.msg{font-size:13px;margin-top:8px;white-space:pre-wrap}.hint{font-size:12px;color:#667992}.wrap{overflow-x:auto}
+</style></head><body>
+<header><div class="row"><img src="/static/assets/sunite-logo-small.png" alt="SUNITE"><strong>Equipment Library</strong></div><a href="/">← Back to designer</a></header>
+<main>
+<div class="card"><h2>Catalogue</h2>
+<div class="row"><select id="kind"><option value="">All types</option><option value="module">Modules</option><option value="inverter">Inverters</option></select>
+<select id="status"><option value="">Any status</option><option value="verified">Verified</option><option value="pending_verification">Pending verification</option><option value="draft">Draft</option><option value="retired">Retired</option></select>
+<input id="q" placeholder="Search manufacturer / model"><button onclick="load()">Search</button></div>
+<p class="hint">Only <b>verified</b> equipment is treated as datasheet-checked in designs. Verification needs a second person (an electrical engineer) who did not enter or last edit the data.</p>
+<div class="wrap"><table id="tbl"><tr><td>Sign in on the designer page first, then reload.</td></tr></table></div><div id="msg" class="msg"></div></div>
+<div class="card"><h2>Bulk entry from datasheets (CSV)</h2>
+<div class="row"><select id="impKind"><option value="module">Modules</option><option value="inverter">Inverters</option></select>
+<button class="secondary" onclick="template()">Download template</button><button onclick="importCsv()">Import as drafts</button></div>
+<p class="hint">Paste rows transcribed from manufacturer datasheets. Every row is checked for physical consistency (e.g. Vmp×Imp ≈ Pmax, efficiency vs. size) and lands as a draft.</p>
+<textarea id="csv" placeholder="manufacturer,model,datasheet_url,pmax_w,..."></textarea><div id="impMsg" class="msg"></div></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);const tok=sessionStorage.getItem('suniteToken')||'';
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,opts={}){opts.headers={'Content-Type':'application/json',...(tok?{'Authorization':'Bearer '+tok}:{}),...(opts.headers||{})};const r=await fetch(path,opts);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'Error '+r.status);return d}
+function keySpecs(e){const s=e.specs;return e.kind==='module'?`${s.pmax_w} W · Voc ${s.voc_v} V · Vmp ${s.vmp_v} V · Isc ${s.isc_a} A · ${s.length_m}×${s.width_m} m`:`${s.ac_kw} kW · ${s.mppt_count} MPPT · ${s.mppt_min_v}-${s.mppt_max_v} V · max ${s.max_dc_v} V · ${s.phases}φ`}
+async function load(){try{const p=new URLSearchParams();['kind','status','q'].forEach(k=>{if($(k).value)p.set(k,$(k).value)});const list=await api('/api/equipment?'+p);
+$('tbl').innerHTML='<tr><th>Type</th><th>Manufacturer / model</th><th>Key specifications</th><th>Datasheet</th><th>Status</th><th>Rev</th><th>Actions</th></tr>'+(list.length?list.map(e=>`<tr><td>${esc(e.kind)}</td><td><b>${esc(e.manufacturer)}</b><br>${esc(e.model)}${e.org_id?'':' <span class="hint">(platform)</span>'}</td><td>${esc(keySpecs(e))}</td><td>${e.datasheet_url?`<a href="${esc(e.datasheet_url)}" target="_blank" rel="noopener noreferrer">open</a>`:'<span class="hint">missing</span>'}</td><td><span class="pill ${esc(e.status)}">${esc(e.status.replace('_',' '))}</span></td><td>${e.revision}</td><td class="row">${e.status==='draft'?`<button class="secondary" onclick="act('${e.id}','submit')">Submit</button>`:''}${e.status==='pending_verification'?`<button onclick="act('${e.id}','verify',${e.revision})">Verify</button>`:''}${e.status!=='retired'?`<button class="secondary" onclick="act('${e.id}','retire')">Retire</button>`:''}</td></tr>`).join(''):'<tr><td colspan="7" class="hint">No equipment yet. Import from datasheets below.</td></tr>');$('msg').textContent=''}catch(e){$('msg').textContent=e.message}}
+async function act(id,a,rev){try{if(a==='verify'&&!confirm('Confirm you have checked every value against the manufacturer datasheet?'))return;if(a==='retire'&&!confirm('Retire this model? It can no longer be used in new designs.'))return;await api(`/api/equipment/${id}/${a}`,{method:'POST',body:a==='verify'?JSON.stringify({revision:rev}):'{}'});load()}catch(e){$('msg').textContent=e.message}}
+async function template(){const r=await fetch('/api/equipment/template.csv?kind='+$('impKind').value);$('csv').value=await r.text()}
+async function importCsv(){try{const d=await api('/api/equipment/import',{method:'POST',body:JSON.stringify({kind:$('impKind').value,csv:$('csv').value})});$('impMsg').textContent=`Imported ${d.created.length} draft(s).`+(d.rejected.length?'\nRejected:\n'+d.rejected.map(r=>`line ${r.line} (${r.model||'?'}): ${r.error}`).join('\n'):'')+(d.created.some(c=>c.warnings.length)?'\nWarnings:\n'+d.created.filter(c=>c.warnings.length).map(c=>`line ${c.line}: ${c.warnings.join('; ')}`).join('\n'):'');load()}catch(e){$('impMsg').textContent=e.message}}
+load();
+</script></body></html>
